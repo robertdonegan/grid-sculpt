@@ -1,0 +1,1598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Grid Sculpt — Adaptive Mesh Brush</title>
+<style>
+  :root{
+    --bg:#0a0b0d;
+    --panel:#13151a;
+    --line:#23262e;
+    --text:#cfd3da;
+    --dim:#6b7280;
+    --refine:#4fd1c5;
+    --coarsen:#ff8a4c;
+    --accent:#e8eaed;
+    --mono:'IBM Plex Mono','SF Mono',Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;overflow:hidden;background:var(--bg);font-family:var(--mono);}
+  canvas{display:block;cursor:none;}
+
+  #panel{
+    position:fixed; top:16px; left:16px;
+    background:rgba(19,21,26,0.92);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:14px 16px;
+    width:236px;
+    max-height:calc(100vh - 32px);
+    overflow-y:auto;
+    color:var(--text);
+    font-size:12px;
+    backdrop-filter: blur(6px);
+    user-select:none;
+    z-index:10;
+    scrollbar-width: thin;
+    scrollbar-color: #3a3f4a transparent;
+  }
+  #panel::-webkit-scrollbar{ width:7px; }
+  #panel::-webkit-scrollbar-track{ background:transparent; }
+  #panel::-webkit-scrollbar-thumb{ background:#3a3f4a; border-radius:4px; }
+  #panel::-webkit-scrollbar-thumb:hover{ background:#4a4f5a; }
+  #panel h1{
+    font-size:11px; letter-spacing:0.12em; text-transform:uppercase;
+    color:var(--dim); margin:0 0 12px 0; font-weight:600;
+  }
+  .row{ margin-bottom:12px; }
+  .row:last-child{ margin-bottom:0; }
+  .label{
+    display:flex; justify-content:space-between; align-items:baseline;
+    color:var(--dim); font-size:10.5px; letter-spacing:0.04em; text-transform:uppercase;
+    margin-bottom:6px;
+  }
+  .label span.val{ color:var(--accent); font-size:11px; letter-spacing:0; text-transform:none; }
+
+  .seg{ display:flex; gap:4px; }
+  .seg button{
+    flex:1; background:#1a1d24; border:1px solid var(--line); color:var(--dim);
+    font-family:var(--mono); font-size:11px; padding:7px 4px; border-radius:6px;
+    cursor:pointer; transition:all .12s ease;
+  }
+  .seg button:hover{ border-color:#3a3f4a; color:var(--text); }
+  .seg button.active{ background:#20242c; color:var(--accent); border-color:#3a3f4a; }
+  .seg button.mode-refine.active{ color:var(--refine); border-color:var(--refine); background:#10302c; }
+  .seg button.mode-coarsen.active{ color:var(--coarsen); border-color:var(--coarsen); background:#3a2418; }
+
+  input[type=range]{
+    width:100%; height:3px; -webkit-appearance:none; background:var(--line);
+    border-radius:2px; outline:none; margin:2px 0;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; width:12px; height:12px; border-radius:50%;
+    background:var(--accent); cursor:pointer; margin-top:0px;
+  }
+
+  .toggle-row{ display:flex; align-items:center; justify-content:space-between; }
+  .switch{
+    width:32px; height:18px; border-radius:10px; background:var(--line);
+    position:relative; cursor:pointer; transition:background .15s;
+  }
+  .switch.on{ background:#2a4a44; }
+  .switch::after{
+    content:''; position:absolute; top:2px; left:2px; width:14px; height:14px;
+    border-radius:50%; background:var(--dim); transition:all .15s;
+  }
+  .switch.on::after{ left:16px; background:var(--refine); }
+
+  #panel hr{ border:none; border-top:1px solid var(--line); margin:12px 0; }
+
+  .searchRow{ display:flex; gap:6px; }
+  .searchRow input[type=text]{
+    flex:1; background:#1a1d24; border:1px solid var(--line); color:var(--text);
+    font-family:var(--mono); font-size:11px; padding:7px 8px; border-radius:6px; outline:none;
+    min-width:0;
+  }
+  .searchRow input[type=text]:focus{ border-color:#3a3f4a; }
+  .searchRow button{
+    background:#1a1d24; border:1px solid var(--line); color:var(--text);
+    font-family:var(--mono); font-size:11px; padding:7px 10px; border-radius:6px; cursor:pointer;
+  }
+  .searchRow button:hover{ border-color:#3a3f4a; }
+
+  .zoomRow{ display:flex; align-items:center; gap:8px; }
+  .zoomRow button{
+    width:28px; height:28px; background:#1a1d24; border:1px solid var(--line); color:var(--text);
+    font-family:var(--mono); font-size:14px; border-radius:6px; cursor:pointer; line-height:1;
+  }
+  .zoomRow button:hover{ border-color:#3a3f4a; }
+  .zoomRow .zlabel{ color:var(--dim); font-size:11px; flex:1; text-align:center; }
+
+  #geoStatus{ font-size:10.5px; color:var(--dim); margin-top:4px; min-height:13px; }
+
+  #attribution{
+    position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+    color:rgba(255,255,255,0.35); font-size:10px; z-index:10; pointer-events:none;
+    white-space:nowrap;
+  }
+
+  .btnrow{ display:flex; gap:6px; }
+  .btnrow button{
+    flex:1; background:#1a1d24; border:1px solid var(--line); color:var(--text);
+    font-family:var(--mono); font-size:11px; padding:7px 4px; border-radius:6px; cursor:pointer;
+  }
+  .btnrow button:hover{ border-color:#3a3f4a; }
+  .btnrow button:active{ background:#20242c; }
+
+  #stats{
+    position:fixed; bottom:16px; left:16px; color:var(--dim); font-size:11px;
+    letter-spacing:0.02em; z-index:10; line-height:1.6;
+  }
+  #stats b{ color:var(--text); font-weight:500; }
+
+  #hint{
+    position:fixed; bottom:16px; right:16px; color:var(--dim); font-size:11px;
+    text-align:right; line-height:1.6; z-index:10;
+  }
+  #hint kbd{
+    background:#1a1d24; border:1px solid var(--line); border-radius:4px; padding:1px 5px;
+    color:var(--text); font-size:10.5px;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="panel">
+  <h1>Grid Sculpt</h1>
+
+  <div class="row">
+    <div class="label">Tool</div>
+    <div class="seg" id="toolSeg">
+      <button data-tool="brush" class="active">Brush</button>
+      <button data-tool="smooth">Smooth</button>
+      <button data-tool="flood">Flood</button>
+      <button data-tool="shape">Shape</button>
+    </div>
+  </div>
+
+  <div class="row" id="shapeKindRow" style="display:none;">
+    <div class="label">Shape</div>
+    <div class="seg" id="shapeKindSeg">
+      <button data-shapekind="square" class="active">Square</button>
+      <button data-shapekind="freeform">Freeform</button>
+      <button data-shapekind="line">Line</button>
+      <button data-shapekind="breakline">Breakline</button>
+    </div>
+  </div>
+
+  <div class="row" id="modeRow">
+    <div class="label">Mode</div>
+    <div class="seg" id="modeSeg">
+      <button data-mode="refine" class="mode-refine active">Refine +</button>
+      <button data-mode="coarsen" class="mode-coarsen">Coarsen −</button>
+    </div>
+  </div>
+
+  <div class="row" id="radiusRow">
+    <div class="label"><span id="radiusLabel">Radius</span> <span class="val" id="radiusVal">90</span></div>
+    <input type="range" id="radius" min="20" max="260" value="90">
+  </div>
+
+  <div class="row" id="strengthRow">
+    <div class="label">Strength <span class="val" id="strengthVal">0.55</span></div>
+    <input type="range" id="strength" min="5" max="100" value="55">
+  </div>
+
+  <div class="row" id="footprintRow">
+    <div class="label">Footprint</div>
+    <div class="seg" id="footSeg">
+      <button data-foot="round" class="active">Round</button>
+      <button data-foot="square">Square</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="label">Detail Limit <span class="val" id="detailVal">5</span></div>
+    <input type="range" id="detail" min="1" max="7" value="5">
+  </div>
+
+  <div class="row">
+    <div class="label">Grid Rotation <span class="val" id="rotationVal">0°</span></div>
+    <input type="range" id="rotationSlider" min="-180" max="180" value="0">
+  </div>
+  <div class="row">
+    <div class="label">Rotate Interval <span class="val" id="rotIntervalVal">15°</span></div>
+    <input type="range" id="rotIntervalSlider" min="1" max="90" value="15">
+  </div>
+  <div class="row">
+    <div class="zoomRow">
+      <button id="rotMinus">−</button>
+      <span class="zlabel" id="rotCurrentVal">0°</span>
+      <button id="rotPlus">+</button>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="row toggle-row">
+    <span>2:1 Balance</span>
+    <div class="switch on" id="balanceSwitch"></div>
+  </div>
+  <div class="row toggle-row">
+    <span>Depth Heatmap</span>
+    <div class="switch" id="heatSwitch"></div>
+  </div>
+
+  <hr>
+
+  <div class="row toggle-row">
+    <span>Show Imagery</span>
+    <div class="switch" id="mapSwitch"></div>
+  </div>
+
+  <div class="row" id="mapTypeRow" style="display:none;">
+    <div class="label">Source</div>
+    <div class="seg" id="mapTypeSeg">
+      <button data-maptype="osm" class="active">Street</button>
+      <button data-maptype="satellite">Satellite</button>
+    </div>
+  </div>
+
+  <div class="row" id="mapOpacityRow" style="display:none;">
+    <div class="label">Opacity <span class="val" id="mapOpacityVal">0.55</span></div>
+    <input type="range" id="mapOpacity" min="5" max="100" value="55">
+  </div>
+
+  <div class="row" id="mapSearchRow" style="display:none;">
+    <div class="label">Go to place</div>
+    <div class="searchRow">
+      <input type="text" id="geoInput" placeholder="Clifton Suspension Bridge">
+      <button id="geoBtn">Go</button>
+    </div>
+    <div id="geoStatus"></div>
+  </div>
+
+  <div class="row" id="mapZoomRow" style="display:none;">
+    <div class="label">Zoom</div>
+    <div class="zoomRow">
+      <button id="zoomOut">−</button>
+      <span class="zlabel" id="zoomVal">17</span>
+      <button id="zoomIn">+</button>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="btnrow">
+    <button id="undoBtn">Undo</button>
+    <button id="resetBtn">Reset</button>
+  </div>
+  <div class="btnrow" style="margin-top:8px;">
+    <button id="schemeBtn">Generate Scheme</button>
+  </div>
+  <div class="btnrow" style="margin-top:8px;">
+    <button id="exportMeshBtn">Export Mesh (GeoJSON)</button>
+  </div>
+
+  <hr>
+
+  <div class="label" style="margin-bottom:6px;">Import Footprints</div>
+  <div style="font-size:10px; color:var(--dim); margin-bottom:6px;">.geojson or .shp, WGS84 lon/lat only</div>
+  <div class="row" style="margin-bottom:6px;">
+    <input type="file" id="shapeFileInput" accept=".geojson,.json,.shp" multiple
+      style="width:100%; font-size:10px; color:var(--text); font-family:var(--mono);">
+  </div>
+  <div id="shapeImportStatus" style="font-size:10.5px; color:var(--dim); margin-bottom:8px; min-height:13px;"></div>
+
+  <div style="font-size:10px; color:var(--dim); margin-bottom:4px;">Optional: per-class target depth</div>
+  <div class="row" style="margin-bottom:6px;">
+    <input type="text" id="classFieldInput" placeholder="property name, e.g. type"
+      style="width:100%; font-size:10.5px; color:var(--text); font-family:var(--mono); background:#0e1014; border:1px solid var(--line); border-radius:6px; padding:6px 8px;">
+  </div>
+  <div class="row" style="margin-bottom:6px;">
+    <input type="text" id="classDepthInput" placeholder='{"building":6,"road":3}'
+      style="width:100%; font-size:10.5px; color:var(--text); font-family:var(--mono); background:#0e1014; border:1px solid var(--line); border-radius:6px; padding:6px 8px;">
+  </div>
+  <div class="btnrow" style="margin-bottom:8px;">
+    <button id="detectClassesBtn">Detect Classes</button>
+  </div>
+
+  <div class="btnrow">
+    <button id="applyShapesBtn">Apply to Grid</button>
+    <button id="clearShapesBtn">Clear</button>
+  </div>
+
+  <hr>
+
+  <div class="label" style="margin-bottom:6px;">DEM Auto-Refine</div>
+  <div style="font-size:10px; color:var(--dim); margin-bottom:6px;">.asc (Esri ASCII Grid), WGS84 corner/cellsize</div>
+  <div class="row" style="margin-bottom:6px;">
+    <input type="file" id="demFileInput" accept=".asc,.txt"
+      style="width:100%; font-size:10px; color:var(--text); font-family:var(--mono);">
+  </div>
+  <div id="demStatus" style="font-size:10.5px; color:var(--dim); margin-bottom:8px; min-height:13px;"></div>
+  <div class="btnrow">
+    <button id="applyDemBtn">Apply DEM Refinement</button>
+  </div>
+</div>
+
+<div id="stats">
+  leaves: <b id="leafCount">0</b><br>
+  max depth: <b id="maxDepthStat">0</b>
+</div>
+
+<div id="hint">
+  hold <kbd>Alt</kbd> to invert brush<br>
+  <kbd>right-drag</kbd> pan map &nbsp; <kbd>shift+scroll</kbd> zoom map<br>
+  <kbd>Ctrl/Cmd+Z</kbd> undo &nbsp; <kbd>scroll</kbd> brush radius
+</div>
+
+<div id="attribution"></div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  let DPR = window.devicePixelRatio || 1;
+
+  // ---------- State ----------
+  const state = {
+    tool: 'brush',
+    mode: 'refine',
+    radius: 90,
+    strength: 0.55,
+    footprint: 'round',
+    maxDepth: 5,
+    balance: true,
+    heatmap: false,
+    altDown: false,
+    map: {
+      enabled: false,
+      type: 'osm',
+      opacity: 0.55,
+      lat: 51.4520,   // One Glass Wharf, Bristol
+      lon: -2.5807,
+      zoom: 17,
+    },
+    shapeKind: 'square',
+    gridRotation: 0,   // degrees, rotates the mesh around the viewport center
+    rotInterval: 15,   // degrees, step size for the +/- rotate buttons
+  };
+
+  let width, height, cellW, cellH, cols, rows;
+  let grid = []; // grid[row][col] = root QuadNode
+  let undoStack = [];
+  const MAX_UNDO = 25;
+  let leafCount = 0;
+  const LEAF_CAP = 30000; // hard ceiling so any cascade is self-limiting
+
+  // ---------- Map tile layer ----------
+  const TILE = 256;
+  const tileCache = new Map();
+  let mapCanvas, mapCtx;
+  let isPanningMap = false;
+  let panStart = null;
+  let tileErrorCount = 0;
+  let tileOkCount = 0;
+
+  // ---------- Grid geo-anchoring ----------
+  // The grid lives in "world pixel" coordinates at gridZoom, anchored to a
+  // fixed lon/lat origin. Screen position is derived from the current map
+  // pan/zoom, so the grid tracks the basemap exactly.
+  let gridZoom = 17, gridOriginWX = 0, gridOriginWY = 0;
+
+  function viewScale(){
+    return Math.pow(2, state.map.zoom - gridZoom);
+  }
+  function captureGridOrigin(){
+    gridZoom = state.map.zoom;
+    const centerWX = lon2tx(state.map.lon, gridZoom) * TILE;
+    const centerWY = lat2ty(state.map.lat, gridZoom) * TILE;
+    gridOriginWX = centerWX - width/2;
+    gridOriginWY = centerWY - height/2;
+  }
+  function rotatePoint(px, py, cx, cy, rad){
+    const dx = px-cx, dy = py-cy;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
+    return { x: cx + dx*cos - dy*sin, y: cy + dx*sin + dy*cos };
+  }
+  function gridToScreen(x, y){
+    const s = viewScale();
+    const z = state.map.zoom;
+    const centerWX = lon2tx(state.map.lon, z) * TILE;
+    const centerWY = lat2ty(state.map.lat, z) * TILE;
+    return {
+      x: (gridOriginWX + x) * s - centerWX + width/2,
+      y: (gridOriginWY + y) * s - centerWY + height/2,
+    };
+  }
+  function screenToGrid(sx, sy){
+    if(state.gridRotation){
+      const rad = -state.gridRotation * Math.PI/180;
+      const rp = rotatePoint(sx, sy, width/2, height/2, rad);
+      sx = rp.x; sy = rp.y;
+    }
+    const s = viewScale();
+    const z = state.map.zoom;
+    const centerWX = lon2tx(state.map.lon, z) * TILE;
+    const centerWY = lat2ty(state.map.lat, z) * TILE;
+    return {
+      x: (sx - width/2 + centerWX) / s - gridOriginWX,
+      y: (sy - height/2 + centerWY) / s - gridOriginWY,
+    };
+  }
+
+  function lon2tx(lon, z){ return (lon+180)/360 * Math.pow(2,z); }
+  function lat2ty(lat, z){
+    const r = lat*Math.PI/180;
+    return (1 - Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2 * Math.pow(2,z);
+  }
+  function tx2lon(tx, z){ return tx/Math.pow(2,z)*360-180; }
+  function ty2lat(ty, z){
+    const n = Math.PI - 2*Math.PI*ty/Math.pow(2,z);
+    return 180/Math.PI*Math.atan(0.5*(Math.exp(n)-Math.exp(-n)));
+  }
+
+  function tileURL(type, z, x, y){
+    const service = type==='satellite' ? 'World_Imagery' : 'World_Street_Map';
+    return `https://server.arcgisonline.com/ArcGIS/rest/services/${service}/MapServer/tile/${z}/${y}/${x}`;
+  }
+
+  function getTile(type, z, x, y){
+    const key = type+'/'+z+'/'+x+'/'+y;
+    let img = tileCache.get(key);
+    if(img) return img;
+    img = new Image();
+    img.onload = ()=>{ tileOkCount++; if(state.map.enabled) renderMapLayer(); };
+    img.onerror = ()=>{
+      tileErrorCount++;
+      tileCache.delete(key);
+      console.error('Grid Sculpt: tile failed to load:', img.src);
+      updateAttribution();
+    };
+    img.src = tileURL(type,z,x,y);
+    tileCache.set(key, img);
+    return img;
+  }
+
+  function renderMapLayer(){
+    if(!mapCtx) return;
+    mapCtx.clearRect(0,0,width,height);
+    const z = state.map.zoom;
+    const n = Math.pow(2,z);
+    const centerTX = lon2tx(state.map.lon, z);
+    const centerTY = lat2ty(state.map.lat, z);
+    const originX = centerTX*TILE - width/2;
+    const originY = centerTY*TILE - height/2;
+    const startTX = Math.floor(originX/TILE);
+    const endTX = Math.floor((originX+width)/TILE);
+    const startTY = Math.floor(originY/TILE);
+    const endTY = Math.floor((originY+height)/TILE);
+    for(let ty=startTY; ty<=endTY; ty++){
+      if(ty<0 || ty>=n) continue;
+      for(let tx=startTX; tx<=endTX; tx++){
+        const wrappedTx = ((tx % n)+n) % n;
+        const sx = tx*TILE - originX;
+        const sy = ty*TILE - originY;
+        const img = getTile(state.map.type, z, wrappedTx, ty);
+        if(img.complete && img.naturalWidth>0){
+          mapCtx.drawImage(img, sx, sy, TILE, TILE);
+        } else {
+          mapCtx.fillStyle = '#15171c';
+          mapCtx.fillRect(sx, sy, TILE, TILE);
+        }
+      }
+    }
+  }
+
+  function setMapZoom(z){
+    state.map.zoom = Math.max(2, Math.min(18, z));
+    document.getElementById('zoomVal').textContent = state.map.zoom;
+    renderMapLayer();
+  }
+
+  function updateAttribution(){
+    const el = document.getElementById('attribution');
+    if(!state.map.enabled){ el.textContent=''; return; }
+    const base = state.map.type==='satellite'
+      ? 'Imagery © Esri, Maxar, Earthstar Geographics'
+      : 'Esri World Street Map — © Esri, HERE, Garmin, OpenStreetMap contributors';
+    if(tileErrorCount>0 && tileOkCount===0){
+      el.textContent = base + ' — tiles failed to load (network/CSP blocked?)';
+    } else {
+      el.textContent = base;
+    }
+  }
+
+  async function geocode(query){
+    const statusEl = document.getElementById('geoStatus');
+    if(!query.trim()) return;
+    statusEl.textContent = 'searching…';
+    try{
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
+      const resp = await fetch(url, {headers:{'Accept':'application/json'}});
+      const data = await resp.json();
+      if(data && data[0]){
+        state.map.lat = parseFloat(data[0].lat);
+        state.map.lon = parseFloat(data[0].lon);
+        statusEl.textContent = data[0].display_name ? data[0].display_name.slice(0,42) : 'found';
+        renderMapLayer();
+      } else {
+        statusEl.textContent = 'not found — try a different search';
+      }
+    } catch(err){
+      statusEl.textContent = 'search failed — check connection';
+    }
+  }
+
+  // ---------- Quadtree ----------
+  function makeNode(x,y,w,h,depth,parent){
+    return {x,y,w,h,depth,parent,children:null};
+  }
+
+  function buildGrid(){
+    const targetCell = 36;
+    cols = Math.max(4, Math.round(width / targetCell));
+    rows = Math.max(4, Math.round(height / targetCell));
+    cellW = width / cols;
+    cellH = height / rows;
+    grid = [];
+    for(let r=0;r<rows;r++){
+      const row=[];
+      for(let c=0;c<cols;c++){
+        row.push(makeNode(c*cellW, r*cellH, cellW, cellH, 0, null));
+      }
+      grid.push(row);
+    }
+    undoStack = [];
+    leafCount = cols*rows;
+    captureGridOrigin();
+  }
+
+  function refine(node){
+    if(node.children || node.depth>=state.maxDepth) return false;
+    if(leafCount >= LEAF_CAP) return false;
+    const w2=node.w/2, h2=node.h/2;
+    const d=node.depth+1;
+    node.children = [
+      makeNode(node.x, node.y, w2, h2, d, node),                              // TL
+      makeNode(node.x+w2, node.y, node.w-w2, h2, d, node),                    // TR
+      makeNode(node.x, node.y+h2, w2, node.h-h2, d, node),                    // BL
+      makeNode(node.x+w2, node.y+h2, node.w-w2, node.h-h2, d, node),         // BR
+    ];
+    leafCount += 3; // one leaf becomes four
+    return true;
+  }
+
+  function coarsen(leaf){
+    const p = leaf.parent;
+    if(!p || !p.children) return false;
+    for(const c of p.children){ if(c.children) return false; }
+    p.children = null;
+    leafCount -= 3;
+    return true;
+  }
+
+  // find leaf containing point (x,y), or null if out of bounds
+  function leafAt(x,y){
+    if(x<0||y<0||x>=width||y>=height) return null;
+    let col = Math.min(cols-1, Math.max(0, Math.floor(x/cellW)));
+    let row = Math.min(rows-1, Math.max(0, Math.floor(y/cellH)));
+    let node = grid[row][col];
+    while(node.children){
+      const midX = node.x+node.w/2, midY = node.y+node.h/2;
+      const idx = (x<midX?0:1) + (y<midY?0:2);
+      node = node.children[idx];
+    }
+    return node;
+  }
+
+  function collectLeaves(node, out){
+    if(node.children){
+      for(const c of node.children) collectLeaves(c, out);
+    } else out.push(node);
+  }
+
+  function allLeaves(){
+    const out=[];
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) collectLeaves(grid[r][c], out);
+    return out;
+  }
+
+  // ---------- 2:1 balance ----------
+  function balancePass(iterations){
+    for(let it=0; it<iterations; it++){
+      const leaves = allLeaves();
+      let changed = false;
+      for(const leaf of leaves){
+        if(leaf.children) continue; // may have been refined this pass
+        const cx = leaf.x+leaf.w/2, cy = leaf.y+leaf.h/2;
+        const samples = [
+          [leaf.x-1, cy], [leaf.x+leaf.w+1, cy],
+          [cx, leaf.y-1], [cx, leaf.y+leaf.h+1],
+        ];
+        for(const [sx,sy] of samples){
+          const nb = leafAt(sx,sy);
+          if(nb && nb.depth > leaf.depth+1){
+            if(refine(leaf)){ changed = true; }
+            break;
+          }
+        }
+      }
+      if(!changed) break;
+    }
+  }
+
+  // ---------- Undo ----------
+  function cloneTree(node){
+    const n = {x:node.x,y:node.y,w:node.w,h:node.h,depth:node.depth,children:null,parent:null};
+    if(node.children){
+      n.children = node.children.map(c=>{ const cc=cloneTree(c); cc.parent=n; return cc; });
+    }
+    return n;
+  }
+  function snapshot(){
+    const snap = grid.map(row => row.map(n => cloneTree(n)));
+    undoStack.push(snap);
+    if(undoStack.length>MAX_UNDO) undoStack.shift();
+  }
+  function undo(){
+    if(undoStack.length===0) return;
+    grid = undoStack.pop();
+  }
+
+  // ---------- Brush math ----------
+  function rectHit(node, cx, cy, radius, footprint){
+    // closest point on rect to (cx,cy)
+    const nx = Math.max(node.x, Math.min(cx, node.x+node.w));
+    const ny = Math.max(node.y, Math.min(cy, node.y+node.h));
+    const dx = cx-nx, dy = cy-ny;
+    if(footprint==='square'){
+      const d = Math.max(Math.abs(dx), Math.abs(dy));
+      return d<=radius ? 1-d/radius : -1;
+    } else {
+      const d = Math.sqrt(dx*dx+dy*dy);
+      return d<=radius ? 1-d/radius : -1;
+    }
+  }
+
+  function smoothstep(t){ return t*t*(3-2*t); }
+
+  // ---------- Shape fill (geometry helpers) ----------
+  function pointInPolygon(px, py, pts){
+    let inside = false;
+    for(let i=0, j=pts.length-1; i<pts.length; j=i++){
+      const xi=pts[i].x, yi=pts[i].y, xj=pts[j].x, yj=pts[j].y;
+      if(((yi>py)!==(yj>py)) && (px < (xj-xi)*(py-yi)/(yj-yi)+xi)){
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+  function distToSegment(px,py, ax,ay, bx,by){
+    const dx=bx-ax, dy=by-ay;
+    const len2 = dx*dx+dy*dy;
+    let t = len2>0 ? ((px-ax)*dx+(py-ay)*dy)/len2 : 0;
+    t = Math.max(0, Math.min(1,t));
+    const cx = ax+t*dx, cy = ay+t*dy;
+    return Math.hypot(px-cx, py-cy);
+  }
+  function distToPolyline(px,py, pts){
+    if(pts.length===0) return Infinity;
+    if(pts.length===1) return Math.hypot(px-pts[0].x, py-pts[0].y);
+    let min = Infinity;
+    for(let i=0;i<pts.length-1;i++){
+      const d = distToSegment(px,py, pts[i].x,pts[i].y, pts[i+1].x,pts[i+1].y);
+      if(d<min) min=d;
+    }
+    return min;
+  }
+
+  // distRatio: 0 = at the shape (finest/coarsest extreme), 1 = at the edge of influence
+  function shapeTargetDepth(distRatio){
+    const finest = state.maxDepth;
+    const coarse = 0;
+    const falloff = 1 - smoothstep(Math.max(0, Math.min(1, distRatio)));
+    const mode = effectiveMode();
+    return mode==='refine'
+      ? Math.round(coarse + falloff*(finest-coarse))
+      : Math.round(finest - falloff*(finest-coarse));
+  }
+
+  function runShapeFill(insideFn, distRatioFn, passes=8, absoluteDepth=null){
+    let touched = false;
+    for(let p=0; p<passes; p++){
+      const leaves = allLeaves();
+      let changed = false;
+      for(const leaf of leaves){
+        const cx = leaf.x+leaf.w/2, cy = leaf.y+leaf.h/2;
+        if(!insideFn(cx,cy)) continue;
+        const target = absoluteDepth!=null ? absoluteDepth : shapeTargetDepth(distRatioFn(cx,cy));
+        if(leaf.depth < target){ if(refine(leaf)){ changed=true; touched=true; } }
+        else if(leaf.depth > target){ if(coarsen(leaf)){ changed=true; touched=true; } }
+      }
+      if(!changed) break;
+    }
+    return touched;
+  }
+
+  function applyShapeSquare(rect, depthOverride){
+    const insideFn = (cx,cy)=> cx>=rect.x && cx<=rect.x+rect.w && cy>=rect.y && cy<=rect.y+rect.h;
+    return runShapeFill(insideFn, ()=>0, 8, depthOverride!=null?depthOverride:null);
+  }
+  function applyShapeFreeform(pts, depthOverride){
+    const insideFn = (cx,cy)=> pointInPolygon(cx,cy,pts);
+    return runShapeFill(insideFn, ()=>0, 8, depthOverride!=null?depthOverride:null);
+  }
+  function applyShapeLine(pts, bufferWGrid){
+    const bufferW = bufferWGrid || Math.max(20, state.radius)/viewScale();
+    const insideFn = (cx,cy)=> distToPolyline(cx,cy,pts) <= bufferW*1.6;
+    const distRatioFn = (cx,cy)=> distToPolyline(cx,cy,pts) / bufferW;
+    return runShapeFill(insideFn, distRatioFn);
+  }
+  // Breakline: a hard-edged band of constant (finest/coarsest) resolution along
+  // a drawn polyline — no smooth falloff, unlike the Line tool. Models a forced
+  // mesh edge (wall, kerb, hedge, culvert) that needs a clean, uniform-width strip.
+  function applyShapeBreakline(pts, bufferWGrid){
+    const bufferW = bufferWGrid || Math.max(20, state.radius)/viewScale();
+    const insideFn = (cx,cy)=> distToPolyline(cx,cy,pts) <= bufferW*0.5;
+    return runShapeFill(insideFn, ()=>0);
+  }
+
+  // ---------- Random scheme generator ----------
+  // ---------- Imported footprints (Shapefile / GeoJSON) ----------
+  let importedShapes = []; // array of rings, each an array of {x,y} in grid-local coords
+
+  function lonLatToGrid(lon, lat){
+    const wx = lon2tx(lon, gridZoom) * TILE;
+    const wy = lat2ty(lat, gridZoom) * TILE;
+    return { x: wx - gridOriginWX, y: wy - gridOriginWY };
+  }
+  function gridToLonLat(x, y){
+    const wx = x + gridOriginWX;
+    const wy = y + gridOriginWY;
+    return { lon: tx2lon(wx/TILE, gridZoom), lat: ty2lat(wy/TILE, gridZoom) };
+  }
+
+  function geoJSONToGridRings(json){
+    const items = []; // {ring, props}
+    const addPolygon = (coords, props)=>{ // GeoJSON Polygon coordinates: array of rings, [0] is outer
+      if(!coords || !coords[0]) return;
+      items.push({ ring: coords[0].map(c=>lonLatToGrid(c[0], c[1])), props: props||{} });
+    };
+    const feats = json.type==='FeatureCollection' ? json.features
+      : json.type==='Feature' ? [json]
+      : [{geometry: json}];
+    for(const f of feats){
+      const geom = f.geometry || f;
+      const props = f.properties || {};
+      if(!geom) continue;
+      if(geom.type==='Polygon') addPolygon(geom.coordinates, props);
+      else if(geom.type==='MultiPolygon') for(const poly of geom.coordinates) addPolygon(poly, props);
+    }
+    return items;
+  }
+
+  // Minimal ESRI Shapefile (.shp) binary parser — Polygon/PolygonZ/PolygonM (type 5/15/25) only.
+  // Assumes geographic (lon/lat, WGS84) coordinates; see UI note for projected data.
+  function parseShapefileBuffer(buffer){
+    const dv = new DataView(buffer);
+    const rings = [];
+    let pos = 100; // skip 100-byte main file header
+    while(pos + 8 <= dv.byteLength){
+      pos += 4; // record number (big-endian) — unused
+      const contentWords = dv.getInt32(pos, false); pos += 4; // big-endian, length in 16-bit words
+      const contentBytes = contentWords * 2;
+      const recStart = pos;
+      if(contentBytes < 4 || recStart + contentBytes > dv.byteLength) break;
+      const shapeType = dv.getInt32(pos, true);
+      let p = pos + 4;
+      if(shapeType===5 || shapeType===15 || shapeType===25){
+        p += 32; // skip bounding box
+        const numParts = dv.getInt32(p, true); p += 4;
+        const numPoints = dv.getInt32(p, true); p += 4;
+        const parts = [];
+        for(let i=0;i<numParts;i++){ parts.push(dv.getInt32(p, true)); p += 4; }
+        const pts = [];
+        for(let i=0;i<numPoints;i++){
+          const x = dv.getFloat64(p, true); p += 8;
+          const y = dv.getFloat64(p, true); p += 8;
+          pts.push([x,y]);
+        }
+        for(let i=0;i<numParts;i++){
+          const start = parts[i];
+          const end = i+1<numParts ? parts[i+1] : numPoints;
+          const ring = pts.slice(start, end);
+          if(ring.length>=3) rings.push(ring);
+        }
+      }
+      pos = recStart + contentBytes;
+    }
+    return rings; // [[ [lon,lat], ... ], ...]
+  }
+
+  // ---------- DEM-aware auto-refinement (Esri ASCII Grid, .asc) ----------
+  // Assumes xllcorner/yllcorner/cellsize are in WGS84 degrees (same caveat as
+  // imported footprints). Cell rows run north-to-south per the .asc convention.
+  let demData = null;     // {ncols,nrows,xll,yll,cellsize,nodata,data:Float32Array}
+  let demMaxSlope = 0;
+
+  function parseAsciiGrid(text){
+    const lines = text.split(/\r?\n/);
+    let i = 0;
+    const header = {};
+    while(i<lines.length){
+      const line = lines[i].trim();
+      if(!line){ i++; continue; }
+      const parts = line.split(/\s+/);
+      if(parts.length===2 && /^[a-zA-Z]/.test(parts[0]) && !isNaN(parseFloat(parts[1]))){
+        header[parts[0].toLowerCase()] = parseFloat(parts[1]);
+        i++;
+      } else break;
+    }
+    const ncols = header.ncols, nrows = header.nrows;
+    const xll = header.xllcorner!=null ? header.xllcorner : header.xllcenter;
+    const yll = header.yllcorner!=null ? header.yllcorner : header.yllcenter;
+    const cellsize = header.cellsize;
+    const nodata = header.nodata_value!=null ? header.nodata_value : -9999;
+    if(!ncols || !nrows || cellsize==null || xll==null || yll==null){
+      throw new Error('Missing required ASCII grid header fields (ncols/nrows/xllcorner/yllcorner/cellsize)');
+    }
+    const data = new Float32Array(ncols*nrows);
+    let idx = 0;
+    for(; i<lines.length && idx<data.length; i++){
+      const line = lines[i].trim();
+      if(!line) continue;
+      const vals = line.split(/\s+/);
+      for(const v of vals){ if(idx<data.length) data[idx++] = parseFloat(v); }
+    }
+    return { ncols, nrows, xll, yll, cellsize, nodata, data };
+  }
+
+  function demElevAt(lon, lat){
+    if(!demData) return null;
+    const col = (lon - demData.xll) / demData.cellsize;
+    const row = (demData.nrows - 1) - (lat - demData.yll) / demData.cellsize;
+    const c0 = Math.floor(col), r0 = Math.floor(row);
+    const fx = col - c0, fy = row - r0;
+    const v = (c,r)=>{
+      if(c<0||c>=demData.ncols||r<0||r>=demData.nrows) return null;
+      const val = demData.data[r*demData.ncols+c];
+      return (val===demData.nodata) ? null : val;
+    };
+    const v00=v(c0,r0), v10=v(c0+1,r0), v01=v(c0,r0+1), v11=v(c0+1,r0+1);
+    if(v00==null||v10==null||v01==null||v11==null) return null;
+    const top = v00*(1-fx) + v10*fx;
+    const bot = v01*(1-fx) + v11*fx;
+    return top*(1-fy) + bot*fy;
+  }
+
+  function demSlopeAt(lon, lat){
+    if(!demData) return null;
+    const eps = demData.cellsize;
+    const e0 = demElevAt(lon, lat);
+    if(e0==null) return null;
+    const ex = demElevAt(lon+eps, lat);
+    const ey = demElevAt(lon, lat+eps);
+    const dzdx = ex!=null ? (ex-e0)/eps : 0;
+    const dzdy = ey!=null ? (ey-e0)/eps : 0;
+    return Math.hypot(dzdx, dzdy);
+  }
+
+  function computeDemMaxSlope(){
+    if(!demData) return 0;
+    let max = 0;
+    const stride = Math.max(1, Math.floor(Math.sqrt((demData.ncols*demData.nrows)/8000)));
+    for(let r=0; r<demData.nrows; r+=stride){
+      for(let c=0; c<demData.ncols; c+=stride){
+        const v = demData.data[r*demData.ncols+c];
+        if(v===demData.nodata) continue;
+        const lon = demData.xll + c*demData.cellsize;
+        const lat = demData.yll + (demData.nrows-1-r)*demData.cellsize;
+        const s = demSlopeAt(lon, lat);
+        if(s!=null && s>max) max = s;
+      }
+    }
+    return max;
+  }
+
+  async function handleDemFile(file){
+    const statusEl = document.getElementById('demStatus');
+    try{
+      const text = await file.text();
+      demData = parseAsciiGrid(text);
+      demMaxSlope = computeDemMaxSlope();
+      statusEl.textContent = `DEM loaded: ${demData.ncols}×${demData.nrows} cells`;
+    } catch(err){
+      demData = null;
+      console.error('Grid Sculpt: failed to parse DEM', err);
+      statusEl.textContent = 'Could not parse DEM — check console';
+    }
+  }
+
+  function applyDemRefinement(){
+    if(!demData) return;
+    snapshot();
+    for(let p=0; p<8; p++){
+      const leaves = allLeaves();
+      let changed = false;
+      for(const leaf of leaves){
+        const cx = leaf.x+leaf.w/2, cy = leaf.y+leaf.h/2;
+        const ll = gridToLonLat(cx, cy);
+        const slope = demSlopeAt(ll.lon, ll.lat);
+        if(slope==null) continue; // outside DEM coverage — leave untouched
+        const norm = demMaxSlope>0 ? Math.min(1, slope/demMaxSlope) : 0;
+        const target = Math.round(smoothstep(norm) * state.maxDepth);
+        if(leaf.depth<target){ if(refine(leaf)) changed=true; }
+        else if(leaf.depth>target){ if(coarsen(leaf)) changed=true; }
+      }
+      if(!changed) break;
+    }
+    if(state.balance) balancePass(4);
+  }
+
+  async function handleShapeFiles(fileList){
+    const files = Array.from(fileList||[]);
+    if(!files.length) return;
+    importedShapes = [];
+    let parsedFiles = 0, failedFiles = 0;
+    for(const file of files){
+      const name = file.name.toLowerCase();
+      try{
+        if(name.endsWith('.geojson') || name.endsWith('.json')){
+          const text = await file.text();
+          const json = JSON.parse(text);
+          importedShapes.push(...geoJSONToGridRings(json));
+          parsedFiles++;
+        } else if(name.endsWith('.shp')){
+          const buf = await file.arrayBuffer();
+          const lonLatRings = parseShapefileBuffer(buf);
+          for(const ring of lonLatRings){
+            importedShapes.push({ ring: ring.map(([lon,lat])=>lonLatToGrid(lon,lat)), props: {} });
+          }
+          parsedFiles++;
+        }
+        // .dbf / .shx / .prj are accepted in the file picker but intentionally ignored
+      } catch(err){
+        failedFiles++;
+        console.error('Grid Sculpt: failed to parse', file.name, err);
+      }
+    }
+    const statusEl = document.getElementById('shapeImportStatus');
+    if(importedShapes.length){
+      statusEl.textContent = `${importedShapes.length} footprint${importedShapes.length===1?'':'s'} loaded`;
+    } else if(failedFiles){
+      statusEl.textContent = 'Could not parse file(s) — check console';
+    } else {
+      statusEl.textContent = 'No polygon footprints found';
+    }
+  }
+
+  function resolveClassDepth(props){
+    const fieldName = document.getElementById('classFieldInput').value.trim();
+    if(!fieldName) return null;
+    let map;
+    try{ map = JSON.parse(document.getElementById('classDepthInput').value || '{}'); }
+    catch(e){ return null; }
+    const val = props[fieldName] ?? props[fieldName.toLowerCase()] ?? props[fieldName.toUpperCase()];
+    if(val==null) return null;
+    const depth = map[String(val)];
+    return (depth!=null && !isNaN(depth)) ? Math.max(0, Math.min(state.maxDepth, Math.round(depth))) : null;
+  }
+
+  function detectClasses(){
+    const fieldName = document.getElementById('classFieldInput').value.trim();
+    const statusEl = document.getElementById('shapeImportStatus');
+    if(!fieldName || !importedShapes.length){
+      statusEl.textContent = 'Load footprints and enter a class field name first';
+      return;
+    }
+    const values = new Set();
+    for(const shape of importedShapes){
+      const val = shape.props[fieldName] ?? shape.props[fieldName.toLowerCase()] ?? shape.props[fieldName.toUpperCase()];
+      if(val!=null) values.add(String(val));
+    }
+    statusEl.textContent = values.size
+      ? `Classes found: ${Array.from(values).join(', ')}`
+      : `No values found for field "${fieldName}"`;
+  }
+
+  function applyImportedShapes(){
+    if(!importedShapes.length) return;
+    snapshot();
+    for(const shape of importedShapes){
+      const depthOverride = resolveClassDepth(shape.props);
+      applyShapeFreeform(shape.ring, depthOverride);
+    }
+    if(state.balance) balancePass(4);
+  }
+
+  function generateScheme(){
+    snapshot();
+    buildGrid();
+    const savedMode = state.mode;
+    state.mode = 'refine';
+
+    // River reach: a meandering polyline across the grid
+    const riverPts = [];
+    const horizontal = Math.random() < 0.5;
+    const steps = 16;
+    const phase = Math.random()*Math.PI*2;
+    for(let i=0;i<=steps;i++){
+      const t = i/steps;
+      if(horizontal){
+        const x = t*width;
+        const y = height*0.5 + Math.sin(t*Math.PI*2.4 + phase)*height*0.20 + (Math.random()-0.5)*height*0.05;
+        riverPts.push({x, y});
+      } else {
+        const y = t*height;
+        const x = width*0.5 + Math.sin(t*Math.PI*2.4 + phase)*width*0.20 + (Math.random()-0.5)*width*0.05;
+        riverPts.push({x, y});
+      }
+    }
+    applyShapeLine(riverPts, Math.max(width,height)*0.07);
+
+    // Building clusters: scattered rectangular footprints, denser detail
+    const clusterCount = 5 + Math.floor(Math.random()*6);
+    for(let i=0;i<clusterCount;i++){
+      const cw = width*(0.06+Math.random()*0.10);
+      const ch = height*(0.06+Math.random()*0.10);
+      const cx = Math.random()*Math.max(1,(width-cw));
+      const cy = Math.random()*Math.max(1,(height-ch));
+      applyShapeSquare({x:cx, y:cy, w:cw, h:ch});
+    }
+
+    state.mode = savedMode;
+    if(state.balance) balancePass(4);
+  }
+
+  // ---------- Mesh export ----------
+  function exportMeshGeoJSON(){
+    const leaves = allLeaves();
+    const features = leaves.map(leaf=>{
+      const corners = [
+        [leaf.x, leaf.y], [leaf.x+leaf.w, leaf.y],
+        [leaf.x+leaf.w, leaf.y+leaf.h], [leaf.x, leaf.y+leaf.h],
+        [leaf.x, leaf.y],
+      ].map(([x,y])=>{ const ll = gridToLonLat(x,y); return [ll.lon, ll.lat]; });
+      return {
+        type: 'Feature',
+        properties: { depth: leaf.depth },
+        geometry: { type: 'Polygon', coordinates: [corners] },
+      };
+    });
+    const geojson = { type: 'FeatureCollection', features };
+    const blob = new Blob([JSON.stringify(geojson)], { type: 'application/geo+json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'grid-sculpt-mesh.geojson';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  let strokeActive = false;
+  let strokeStarted = false;
+  let pointer = {x:-9999,y:-9999};
+  let shapeDrawing = false;
+  let shapeStart = null;   // grid-space {x,y} for square tool
+  let shapePoints = [];    // grid-space points for freeform/line tools
+
+  function effectiveMode(){
+    if(!state.altDown) return state.mode;
+    return state.mode==='refine' ? 'coarsen' : 'refine';
+  }
+
+  function brushTick(){
+    if(!strokeActive) return;
+    const mode = effectiveMode();
+    const gp = screenToGrid(pointer.x, pointer.y);
+    const gRadius = state.radius / viewScale();
+    const candidates = [];
+    const leaves = allLeaves();
+    for(const leaf of leaves){
+      const f = rectHit(leaf, gp.x, gp.y, gRadius, state.footprint);
+      if(f<0) continue;
+      candidates.push([leaf, f]);
+    }
+    for(const [leaf, f] of candidates){
+      const prob = smoothstep(f) * state.strength;
+      if(Math.random() > prob) continue;
+      if(mode==='refine'){ refine(leaf); }
+      else { coarsen(leaf); }
+    }
+  }
+
+  function smoothTick(){
+    if(!strokeActive) return;
+    const gp = screenToGrid(pointer.x, pointer.y);
+    const gRadius = state.radius / viewScale();
+    const leaves = allLeaves();
+    for(const leaf of leaves){
+      const f = rectHit(leaf, gp.x, gp.y, gRadius, state.footprint);
+      if(f<0) continue;
+      const prob = smoothstep(f) * state.strength;
+      if(Math.random() > prob) continue;
+      const cx = leaf.x+leaf.w/2, cy = leaf.y+leaf.h/2;
+      const samples = [
+        [leaf.x-1, cy], [leaf.x+leaf.w+1, cy],
+        [cx, leaf.y-1], [cx, leaf.y+leaf.h+1],
+      ];
+      let sum=0, n=0;
+      for(const [sx,sy] of samples){
+        const nb = leafAt(sx,sy);
+        if(nb){ sum+=nb.depth; n++; }
+      }
+      if(n===0) continue;
+      const avg = sum/n;
+      if(leaf.depth < avg-0.4){ refine(leaf); }
+      else if(leaf.depth > avg+0.4){ coarsen(leaf); }
+    }
+  }
+
+  function floodFill(px, py){
+    const start = leafAt(px,py);
+    if(!start) return;
+    const mode = effectiveMode();
+    const targetDepth = start.depth;
+    const visited = new Set([start]);
+    const queue = [start];
+    const region = [];
+    while(queue.length){
+      const n = queue.pop();
+      region.push(n);
+      const cx = n.x+n.w/2, cy = n.y+n.h/2;
+      const samples = [
+        [n.x-1, cy], [n.x+n.w+1, cy],
+        [cx, n.y-1], [cx, n.y+n.h+1],
+      ];
+      for(const [sx,sy] of samples){
+        const nb = leafAt(sx,sy);
+        if(nb && !visited.has(nb) && nb.depth===targetDepth){
+          visited.add(nb); queue.push(nb);
+        }
+      }
+    }
+    let touched=false;
+    for(const leaf of region){
+      if(leaf.children) continue;
+      if(mode==='refine'){ if(refine(leaf)) touched=true; }
+      else { if(coarsen(leaf)) touched=true; }
+    }
+    if(touched && state.balance) balancePass(3);
+  }
+
+  // ---------- Render ----------
+  function depthColor(depth, max){
+    const t = max>0 ? depth/max : 0;
+    // dark teal -> warm accent ramp
+    const r = Math.round(20 + t*60);
+    const g = Math.round(28 + t*40);
+    const b = Math.round(34 + t*10);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function render(){
+    ctx.clearRect(0,0,width,height);
+
+    if(state.map.enabled && mapCanvas){
+      ctx.fillStyle = '#0a0b0d';
+      ctx.fillRect(0,0,width,height);
+      ctx.globalAlpha = state.map.opacity;
+      ctx.drawImage(mapCanvas, 0, 0, width, height);
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.fillStyle = '#0a0b0d';
+      ctx.fillRect(0,0,width,height);
+    }
+
+    const showFill = state.heatmap && !state.map.enabled;
+    const leaves = allLeaves();
+    let maxD = 0;
+    for(const l of leaves) if(l.depth>maxD) maxD = l.depth;
+
+    const s = viewScale();
+    const z = state.map.zoom;
+    const centerWX = lon2tx(state.map.lon, z) * TILE;
+    const centerWY = lat2ty(state.map.lat, z) * TILE;
+    const offX = -centerWX + width/2;
+    const offY = -centerWY + height/2;
+    const rotRad = (state.gridRotation||0) * Math.PI/180;
+
+    function gridToScreenRotated(x, y){
+      const p = gridToScreen(x, y);
+      if(!rotRad) return p;
+      return rotatePoint(p.x, p.y, width/2, height/2, rotRad);
+    }
+
+    ctx.save();
+    if(rotRad){
+      ctx.translate(width/2, height/2);
+      ctx.rotate(rotRad);
+      ctx.translate(-width/2, -height/2);
+    }
+    for(const leaf of leaves){
+      const sx = (gridOriginWX+leaf.x)*s + offX;
+      const sy = (gridOriginWY+leaf.y)*s + offY;
+      const sw = leaf.w*s, sh = leaf.h*s;
+      if(showFill){
+        ctx.fillStyle = depthColor(leaf.depth, state.maxDepth);
+        ctx.fillRect(sx, sy, sw, sh);
+      }
+      if(sw<1 || sh<1) continue;
+      ctx.strokeStyle = state.map.enabled
+        ? (state.map.type==='satellite' ? 'rgba(255,255,255,0.45)' : 'rgba(20,24,30,0.55)')
+        : (state.heatmap ? 'rgba(255,255,255,0.10)' : '#1e2026');
+      ctx.lineWidth = 1;
+      ctx.strokeRect(sx+0.5, sy+0.5, sw-1, sh-1);
+    }
+    ctx.restore();
+
+    // imported footprints overlay
+    if(importedShapes.length){
+      ctx.save();
+      ctx.strokeStyle = '#ffd166';
+      ctx.fillStyle = 'rgba(255,209,102,0.12)';
+      ctx.lineWidth = 1.5;
+      for(const shape of importedShapes){
+        const ring = shape.ring;
+        if(!ring || ring.length<2) continue;
+        ctx.beginPath();
+        const p0 = gridToScreenRotated(ring[0].x, ring[0].y);
+        ctx.moveTo(p0.x, p0.y);
+        for(let i=1;i<ring.length;i++){
+          const p = gridToScreenRotated(ring[i].x, ring[i].y);
+          ctx.lineTo(p.x, p.y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // shape-drawing preview
+    if(shapeDrawing){
+      ctx.save();
+      ctx.strokeStyle = effectiveMode()==='refine' ? '#4fd1c5' : '#ff8a4c';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5,4]);
+      if(state.shapeKind==='square' && shapeStart){
+        const a = gridToScreenRotated(shapeStart.x, shapeStart.y);
+        ctx.strokeRect(Math.min(a.x,pointer.x), Math.min(a.y,pointer.y), Math.abs(pointer.x-a.x), Math.abs(pointer.y-a.y));
+      } else if((state.shapeKind==='freeform'||state.shapeKind==='line'||state.shapeKind==='breakline') && shapePoints.length){
+        ctx.beginPath();
+        const p0 = gridToScreenRotated(shapePoints[0].x, shapePoints[0].y);
+        ctx.moveTo(p0.x, p0.y);
+        for(let i=1;i<shapePoints.length;i++){
+          const p = gridToScreenRotated(shapePoints[i].x, shapePoints[i].y);
+          ctx.lineTo(p.x, p.y);
+        }
+        ctx.lineTo(pointer.x, pointer.y);
+        if(state.shapeKind==='freeform') ctx.closePath();
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    // brush cursor
+    const mode = effectiveMode();
+    const color = mode==='refine' ? '#4fd1c5' : '#ff8a4c';
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.85;
+    if(state.tool==='flood'){
+      ctx.beginPath();
+      ctx.arc(pointer.x, pointer.y, 5, 0, Math.PI*2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    } else if(state.footprint==='square' && state.tool!=='flood'){
+      ctx.strokeRect(pointer.x-state.radius, pointer.y-state.radius, state.radius*2, state.radius*2);
+    } else if(state.tool!=='flood'){
+      ctx.beginPath();
+      ctx.arc(pointer.x, pointer.y, state.radius, 0, Math.PI*2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(pointer.x, pointer.y, 2.5, 0, Math.PI*2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.restore();
+
+    document.getElementById('leafCount').textContent = leaves.length;
+    document.getElementById('maxDepthStat').textContent = maxD;
+  }
+
+  // ---------- Main loop ----------
+  let lastTick = 0;
+  function loop(ts){
+    try{
+      if(ts - lastTick > 45){
+        lastTick = ts;
+        if(strokeActive){
+          if(state.tool==='brush') brushTick();
+          else if(state.tool==='smooth') smoothTick();
+        }
+      }
+      render();
+    } catch(err){
+      console.error('Grid Sculpt render error:', err);
+    }
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- Resize ----------
+  function resize(){
+    DPR = window.devicePixelRatio || 1;
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width*DPR;
+    canvas.height = height*DPR;
+    canvas.style.width = width+'px';
+    canvas.style.height = height+'px';
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    if(!mapCanvas){
+      mapCanvas = document.createElement('canvas');
+      mapCtx = mapCanvas.getContext('2d');
+    }
+    mapCanvas.width = width;
+    mapCanvas.height = height;
+    if(state.map.enabled) renderMapLayer();
+    buildGrid();
+  }
+  let resizeTimer;
+  window.addEventListener('resize', ()=>{
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resize, 200);
+  });
+
+  // ---------- Input ----------
+  canvas.addEventListener('contextmenu', (e)=> e.preventDefault());
+
+  canvas.addEventListener('pointerdown', (e)=>{
+    pointer.x = e.clientX; pointer.y = e.clientY;
+    if(e.button===2){
+      if(!state.map.enabled) return;
+      isPanningMap = true;
+      panStart = {
+        sx: e.clientX, sy: e.clientY,
+        tx: lon2tx(state.map.lon, state.map.zoom),
+        ty: lat2ty(state.map.lat, state.map.zoom),
+      };
+      canvas.style.cursor = 'grabbing';
+      return;
+    }
+    snapshot();
+    if(state.tool==='flood'){
+      const gp = screenToGrid(pointer.x, pointer.y);
+      floodFill(gp.x, gp.y);
+    } else if(state.tool==='shape'){
+      shapeDrawing = true;
+      const gp = screenToGrid(pointer.x, pointer.y);
+      if(state.shapeKind==='square'){
+        shapeStart = gp;
+        shapePoints = [];
+      } else {
+        shapePoints = [gp];
+        shapeStart = null;
+      }
+    } else {
+      strokeActive = true;
+    }
+  });
+  window.addEventListener('pointermove', (e)=>{
+    pointer.x = e.clientX; pointer.y = e.clientY;
+    if(isPanningMap && panStart){
+      const dx = e.clientX - panStart.sx, dy = e.clientY - panStart.sy;
+      const newTX = panStart.tx - dx/TILE;
+      const newTY = panStart.ty - dy/TILE;
+      state.map.lon = tx2lon(newTX, state.map.zoom);
+      state.map.lat = ty2lat(newTY, state.map.zoom);
+      renderMapLayer();
+      return;
+    }
+    if(shapeDrawing && (state.shapeKind==='freeform' || state.shapeKind==='line' || state.shapeKind==='breakline')){
+      const gp = screenToGrid(pointer.x, pointer.y);
+      const last = shapePoints[shapePoints.length-1];
+      if(!last || Math.hypot(pointer.x - gridToScreen(last.x,last.y).x, pointer.y - gridToScreen(last.x,last.y).y) > 6){
+        shapePoints.push(gp);
+      }
+    }
+  });
+  window.addEventListener('pointerup', ()=>{
+    if(isPanningMap){
+      isPanningMap = false;
+      panStart = null;
+      canvas.style.cursor = 'none';
+      return;
+    }
+    if(shapeDrawing){
+      shapeDrawing = false;
+      if(state.shapeKind==='square' && shapeStart){
+        const gp = screenToGrid(pointer.x, pointer.y);
+        const rect = {
+          x: Math.min(shapeStart.x, gp.x), y: Math.min(shapeStart.y, gp.y),
+          w: Math.abs(gp.x-shapeStart.x), h: Math.abs(gp.y-shapeStart.y),
+        };
+        applyShapeSquare(rect);
+      } else if(state.shapeKind==='freeform' && shapePoints.length>=3){
+        applyShapeFreeform(shapePoints);
+      } else if(state.shapeKind==='line' && shapePoints.length>=2){
+        applyShapeLine(shapePoints);
+      } else if(state.shapeKind==='breakline' && shapePoints.length>=2){
+        applyShapeBreakline(shapePoints);
+      }
+      shapeStart = null; shapePoints = [];
+      if(state.balance) balancePass(4);
+      return;
+    }
+    if(strokeActive && state.balance) balancePass(4);
+    strokeActive = false;
+  });
+  canvas.addEventListener('wheel', (e)=>{
+    e.preventDefault();
+    if(e.shiftKey && state.map.enabled){
+      setMapZoom(state.map.zoom - Math.sign(e.deltaY));
+      return;
+    }
+    state.radius = Math.max(20, Math.min(260, state.radius - e.deltaY*0.15));
+    document.getElementById('radius').value = state.radius;
+    document.getElementById('radiusVal').textContent = Math.round(state.radius);
+  }, {passive:false});
+
+  window.addEventListener('keydown', (e)=>{
+    if(e.key==='Alt'){ state.altDown = true; }
+    if((e.ctrlKey||e.metaKey) && e.key==='z'){ e.preventDefault(); undo(); }
+  });
+  window.addEventListener('keyup', (e)=>{
+    if(e.key==='Alt'){ state.altDown = false; }
+  });
+  window.addEventListener('blur', ()=>{ state.altDown=false; strokeActive=false; });
+
+  // ---------- UI wiring ----------
+  function setActive(container, attr, value){
+    container.querySelectorAll('button').forEach(b=>{
+      b.classList.toggle('active', b.dataset[attr]===value);
+    });
+  }
+
+  document.getElementById('toolSeg').addEventListener('click', (e)=>{
+    const btn = e.target.closest('button'); if(!btn) return;
+    state.tool = btn.dataset.tool;
+    setActive(document.getElementById('toolSeg'), 'tool', state.tool);
+    const showMode = state.tool!=='smooth';
+    document.getElementById('modeRow').style.display = showMode ? '' : 'none';
+    updateToolRowsVisibility();
+  });
+
+  document.getElementById('shapeKindSeg').addEventListener('click', (e)=>{
+    const btn = e.target.closest('button'); if(!btn) return;
+    state.shapeKind = btn.dataset.shapekind;
+    setActive(document.getElementById('shapeKindSeg'), 'shapekind', state.shapeKind);
+    updateToolRowsVisibility();
+  });
+
+  function updateToolRowsVisibility(){
+    const isShape = state.tool==='shape';
+    document.getElementById('shapeKindRow').style.display = isShape ? '' : 'none';
+    document.getElementById('strengthRow').style.display = isShape ? 'none' : '';
+    document.getElementById('footprintRow').style.display = isShape ? 'none' : '';
+    const showRadius = !isShape || state.shapeKind==='line' || state.shapeKind==='breakline';
+    document.getElementById('radiusRow').style.display = showRadius ? '' : 'none';
+    document.getElementById('radiusLabel').textContent = (isShape && (state.shapeKind==='line'||state.shapeKind==='breakline')) ? 'Buffer Width' : 'Radius';
+  }
+
+  document.getElementById('modeSeg').addEventListener('click', (e)=>{
+    const btn = e.target.closest('button'); if(!btn) return;
+    state.mode = btn.dataset.mode;
+    setActive(document.getElementById('modeSeg'), 'mode', state.mode);
+  });
+
+  document.getElementById('footSeg').addEventListener('click', (e)=>{
+    const btn = e.target.closest('button'); if(!btn) return;
+    state.footprint = btn.dataset.foot;
+    setActive(document.getElementById('footSeg'), 'foot', state.footprint);
+  });
+
+  document.getElementById('radius').addEventListener('input', (e)=>{
+    state.radius = +e.target.value;
+    document.getElementById('radiusVal').textContent = state.radius;
+  });
+  document.getElementById('strength').addEventListener('input', (e)=>{
+    state.strength = (+e.target.value)/100;
+    document.getElementById('strengthVal').textContent = state.strength.toFixed(2);
+  });
+  document.getElementById('detail').addEventListener('input', (e)=>{
+    state.maxDepth = +e.target.value;
+    document.getElementById('detailVal').textContent = state.maxDepth;
+  });
+
+  function setGridRotation(deg){
+    // normalize into [-180, 180]
+    state.gridRotation = ((deg + 180) % 360 + 360) % 360 - 180;
+    document.getElementById('rotationSlider').value = state.gridRotation;
+    document.getElementById('rotationVal').textContent = Math.round(state.gridRotation) + '°';
+    document.getElementById('rotCurrentVal').textContent = Math.round(state.gridRotation) + '°';
+  }
+  document.getElementById('rotationSlider').addEventListener('input', (e)=>{
+    setGridRotation(+e.target.value);
+  });
+  document.getElementById('rotIntervalSlider').addEventListener('input', (e)=>{
+    state.rotInterval = +e.target.value;
+    document.getElementById('rotIntervalVal').textContent = state.rotInterval + '°';
+  });
+  document.getElementById('rotMinus').addEventListener('click', ()=> setGridRotation(state.gridRotation - state.rotInterval));
+  document.getElementById('rotPlus').addEventListener('click', ()=> setGridRotation(state.gridRotation + state.rotInterval));
+
+  function bindSwitch(id, key){
+    const el = document.getElementById(id);
+    el.addEventListener('click', ()=>{
+      state[key] = !state[key];
+      el.classList.toggle('on', state[key]);
+    });
+  }
+  bindSwitch('balanceSwitch','balance');
+  bindSwitch('heatSwitch','heatmap');
+
+  const mapRows = ['mapTypeRow','mapOpacityRow','mapSearchRow','mapZoomRow'];
+  document.getElementById('mapSwitch').addEventListener('click', ()=>{
+    state.map.enabled = !state.map.enabled;
+    document.getElementById('mapSwitch').classList.toggle('on', state.map.enabled);
+    mapRows.forEach(id=> document.getElementById(id).style.display = state.map.enabled ? '' : 'none');
+    updateAttribution();
+    if(state.map.enabled) renderMapLayer();
+  });
+
+  document.getElementById('mapTypeSeg').addEventListener('click', (e)=>{
+    const btn = e.target.closest('button'); if(!btn) return;
+    state.map.type = btn.dataset.maptype;
+    setActive(document.getElementById('mapTypeSeg'), 'maptype', state.map.type);
+    updateAttribution();
+    renderMapLayer();
+  });
+
+  document.getElementById('mapOpacity').addEventListener('input', (e)=>{
+    state.map.opacity = (+e.target.value)/100;
+    document.getElementById('mapOpacityVal').textContent = state.map.opacity.toFixed(2);
+  });
+
+  document.getElementById('geoBtn').addEventListener('click', ()=>{
+    geocode(document.getElementById('geoInput').value);
+  });
+  document.getElementById('geoInput').addEventListener('keydown', (e)=>{
+    if(e.key==='Enter') geocode(e.target.value);
+  });
+
+  document.getElementById('zoomIn').addEventListener('click', ()=> setMapZoom(state.map.zoom+1));
+  document.getElementById('zoomOut').addEventListener('click', ()=> setMapZoom(state.map.zoom-1));
+
+  document.getElementById('undoBtn').addEventListener('click', undo);
+  document.getElementById('resetBtn').addEventListener('click', ()=>{ buildGrid(); });
+  document.getElementById('schemeBtn').addEventListener('click', generateScheme);
+  document.getElementById('exportMeshBtn').addEventListener('click', exportMeshGeoJSON);
+  document.getElementById('detectClassesBtn').addEventListener('click', detectClasses);
+  document.getElementById('demFileInput').addEventListener('change', (e)=>{
+    if(e.target.files && e.target.files[0]) handleDemFile(e.target.files[0]);
+  });
+  document.getElementById('applyDemBtn').addEventListener('click', applyDemRefinement);
+  document.getElementById('shapeFileInput').addEventListener('change', (e)=>{
+    handleShapeFiles(e.target.files);
+  });
+  document.getElementById('applyShapesBtn').addEventListener('click', applyImportedShapes);
+  document.getElementById('clearShapesBtn').addEventListener('click', ()=>{
+    importedShapes = [];
+    document.getElementById('shapeImportStatus').textContent = '';
+    document.getElementById('shapeFileInput').value = '';
+  });
+
+  // ---------- Init ----------
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
