@@ -17,7 +17,7 @@
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;overflow:hidden;background:var(--bg);font-family:var(--mono);}
-  canvas{display:block;cursor:none;}
+  canvas{display:block;cursor:none;touch-action:none;}
 
   #panel{
     position:fixed; top:16px; left:16px;
@@ -326,7 +326,8 @@
 <div id="hint">
   hold <kbd>Alt</kbd> to invert brush<br>
   <kbd>right-drag</kbd> pan map &nbsp; <kbd>shift+scroll</kbd> zoom map<br>
-  <kbd>Ctrl/Cmd+Z</kbd> undo &nbsp; <kbd>scroll</kbd> brush radius
+  <kbd>Ctrl/Cmd+Z</kbd> undo &nbsp; <kbd>scroll</kbd> brush radius<br>
+  touch: <kbd>1 finger</kbd> sculpt &nbsp; <kbd>2 fingers</kbd> pan/zoom map
 </div>
 
 <div id="attribution"></div>
@@ -1079,6 +1080,17 @@
   let shapeStart = null;   // grid-space {x,y} for square tool
   let shapePoints = [];    // grid-space points for freeform/line tools
 
+  // touch fallback: single finger sculpts (same as left-click), two fingers
+  // pan+zoom the basemap (same role as right-drag + shift+scroll on desktop)
+  const activeTouches = new Map(); // pointerId -> {x,y}
+  let isPinching = false;
+  let pinchStart = null;
+
+  function endTouchGesture(pointerId){
+    activeTouches.delete(pointerId);
+    if(activeTouches.size<2){ isPinching = false; pinchStart = null; }
+  }
+
   function effectiveMode(){
     if(!state.altDown) return state.mode;
     return state.mode==='refine' ? 'coarsen' : 'refine';
@@ -1355,6 +1367,29 @@
 
   canvas.addEventListener('pointerdown', (e)=>{
     pointer.x = e.clientX; pointer.y = e.clientY;
+
+    if(e.pointerType==='touch'){
+      activeTouches.set(e.pointerId, {x:e.clientX, y:e.clientY});
+      if(activeTouches.size===2){
+        // second finger arrived: cancel any in-progress single-finger sculpt/shape
+        // and switch into pinch pan+zoom mode (mirrors right-drag + shift+scroll)
+        strokeActive = false;
+        shapeDrawing = false; shapeStart = null; shapePoints = [];
+        isPinching = true;
+        const pts = Array.from(activeTouches.values());
+        pinchStart = {
+          dist: Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y) || 1,
+          mid: { x:(pts[0].x+pts[1].x)/2, y:(pts[0].y+pts[1].y)/2 },
+          zoom: state.map.zoom,
+          tx: lon2tx(state.map.lon, state.map.zoom),
+          ty: lat2ty(state.map.lat, state.map.zoom),
+        };
+        return;
+      }
+      if(activeTouches.size>2) return; // ignore a 3rd+ finger
+      // exactly one finger down: fall through and treat like a primary click below
+    }
+
     if(e.button===2){
       if(!state.map.enabled) return;
       isPanningMap = true;
@@ -1386,6 +1421,26 @@
   });
   window.addEventListener('pointermove', (e)=>{
     pointer.x = e.clientX; pointer.y = e.clientY;
+
+    if(e.pointerType==='touch' && activeTouches.has(e.pointerId)){
+      activeTouches.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    }
+    if(isPinching && pinchStart && activeTouches.size===2 && state.map.enabled){
+      const pts = Array.from(activeTouches.values());
+      const dist = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y) || 1;
+      const mid = { x:(pts[0].x+pts[1].x)/2, y:(pts[0].y+pts[1].y)/2 };
+      let newZoom = pinchStart.zoom + Math.log2(dist/pinchStart.dist);
+      newZoom = Math.max(2, Math.min(19, newZoom));
+      const dx = mid.x - pinchStart.mid.x, dy = mid.y - pinchStart.mid.y;
+      const newTX = pinchStart.tx - dx/TILE;
+      const newTY = pinchStart.ty - dy/TILE;
+      state.map.lon = tx2lon(newTX, pinchStart.zoom);
+      state.map.lat = ty2lat(newTY, pinchStart.zoom);
+      state.map.zoom = newZoom;
+      document.getElementById('zoomVal').textContent = Math.round(state.map.zoom);
+      renderMapLayer();
+      return;
+    }
     if(isPanningMap && panStart){
       const dx = e.clientX - panStart.sx, dy = e.clientY - panStart.sy;
       const newTX = panStart.tx - dx/TILE;
@@ -1403,7 +1458,9 @@
       }
     }
   });
-  window.addEventListener('pointerup', ()=>{
+  function handlePointerEnd(e){
+    if(e.pointerType==='touch') endTouchGesture(e.pointerId);
+    if(isPinching) return; // still mid-pinch with remaining finger(s)
     if(isPanningMap){
       isPanningMap = false;
       panStart = null;
@@ -1432,7 +1489,9 @@
     }
     if(strokeActive && state.balance) balancePass(4);
     strokeActive = false;
-  });
+  }
+  window.addEventListener('pointerup', handlePointerEnd);
+  window.addEventListener('pointercancel', handlePointerEnd);
   canvas.addEventListener('wheel', (e)=>{
     e.preventDefault();
     if(e.shiftKey && state.map.enabled){
